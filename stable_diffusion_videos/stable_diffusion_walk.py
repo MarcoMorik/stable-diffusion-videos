@@ -71,27 +71,28 @@ def make_video_ffmpeg(frame_dir, output_file_name='output.mp4', frame_filename="
 
 
 def walk(
-    prompts=["blueberry spaghetti", "strawberry spaghetti"],
-    seeds=[42, 123],
-    num_steps=5,
-    output_dir="dreams",
-    name="berry_good_spaghetti",
-    height=512,
-    width=512,
-    guidance_scale=7.5,
-    eta=0.0,
-    num_inference_steps=50,
-    do_loop=False,
-    make_video=False,
-    use_lerp_for_text=True,
-    scheduler="klms",  # choices: default, ddim, klms
-    disable_tqdm=False,
-    upsample=False,
-    fps=30,
-    less_vram=False,
-    resume=False,
-    batch_size=1,
-    frame_filename_ext='.png',
+        prompts=["blueberry spaghetti", "strawberry spaghetti"],
+        seeds=[42, 123],
+        num_steps=5,
+        output_dir="dreams",
+        name="berry_good_spaghetti",
+        height=512,
+        width=512,
+        guidance_scale=7.5,
+        eta=0.0,
+        num_inference_steps=50,
+        do_loop=False,
+        make_video=False,
+        use_lerp_for_text=True,
+        scheduler="klms",  # choices: default, ddim, klms
+        disable_tqdm=False,
+        upsample=False,
+        fps=30,
+        less_vram=False,
+        resume=False,
+        batch_size=1,
+        frame_filename_ext='.png',
+        latent_interpolation_steps=20,
 ):
     """Generate video frames/a video given a list of prompts and seeds.
 
@@ -165,7 +166,8 @@ def walk(
     else:
         # When resuming, we load all available info from existing prompt config, using kwargs passed in where necessary
         if not prompt_config_path.exists():
-            raise FileNotFoundError(f"You specified resume=True, but no prompt config file was found at {prompt_config_path}")
+            raise FileNotFoundError(
+                f"You specified resume=True, but no prompt config file was found at {prompt_config_path}")
 
         data = json.load(open(prompt_config_path))
         prompts = data['prompts']
@@ -180,13 +182,12 @@ def walk(
         make_video = data['make_video']
         use_lerp_for_text = data['use_lerp_for_text']
         scheduler = data['scheduler']
-        disable_tqdm=disable_tqdm
+        disable_tqdm = disable_tqdm
         upsample = data['upsample'] if 'upsample' in data else upsample
         fps = data['fps'] if 'fps' in data else fps
 
         resume_step = int(sorted(output_path.glob(f"frame*{frame_filename_ext}"))[-1].stem[5:])
         print(f"\nResuming {output_path} from step {resume_step}...")
-
 
     if upsample:
         from .upsampling import PipelineRealESRGAN
@@ -213,6 +214,7 @@ def walk(
         seeds.append(first_seed)
 
     frame_index = 0
+    old_latent = None
     for prompt, seed in zip(prompts, seeds):
         # Text
         embeds_b = pipeline.embed_text(prompt)
@@ -251,7 +253,7 @@ def walk(
 
             do_print_progress = (i == 0) or ((frame_index) % 20 == 0)
             if do_print_progress:
-                print(f"COUNT: {frame_index}/{len(seeds)*num_steps}")
+                print(f"COUNT: {frame_index}/{len(seeds) * num_steps}")
 
             with torch.autocast("cuda"):
                 outputs = pipeline(
@@ -263,13 +265,51 @@ def walk(
                     eta=eta,
                     num_inference_steps=num_inference_steps,
                     output_type='pil' if not upsample else 'numpy'
-                )["sample"]
+                )
+                vae_latent = outputs["latent"]
+                if latent_interpolation_steps:
+                    dims = vae_latent.shape
+                    if dims[0] >1:
+                        #Within Batch interpolation
+                        cur = torch.stack([torch.lerp(vae_latent[:-1], vae_latent[1:], float(i) / 20) for i in
+                                           range(1, latent_interpolation_steps)], 1).reshape((-1,*dims[1:]))
+                    else:
+                        #We have no interpolation within a Batch
+                        cur = torch.Tensor([])
+
+                    if old_latent is not None:
+                        #Interpolation from previous batch
+                        prev = torch.stack([torch.lerp(old_latent[-1:], vae_latent[:1], float(i) / 20) for i in
+                                            range(1, latent_interpolation_steps)], 1).reshape((-1, *dims[1:]))
+
+                        intermediate_latents = torch.cat((prev,cur),dim=0)
+                    else:
+                        intermediate_latents = cur
+
+                    print("we do intermediate interpolation", intermediate_latents.shape)
+                    if intermediate_latents.shape[0] >0:
+                        with torch.no_grad():
+                            image = pipeline.vae.decode(intermediate_latents).sample
+
+                            image = (image / 2 + 0.5).clamp(0, 1)
+                            image = image.cpu().permute(0, 2, 3, 1).numpy()
+                            image = pipeline.numpy_to_pil(image)
+                            for img in image:
+                                frame_filepath = output_path / (f"frame%06d{frame_filename_ext}" % frame_index)
+                                img.save(frame_filepath)
+                                frame_index += 1
+
+                outputs = outputs["sample"]
 
                 del embeds_batch
                 del latents_batch
+                del old_latent
+                del intermediate_latents
+                del cur
+                del image
                 torch.cuda.empty_cache()
                 latents_batch, embeds_batch = None, None
-
+                old_latent = vae_latent
                 if upsample:
                     images = []
                     for output in outputs:
@@ -289,6 +329,23 @@ def walk(
 
 
 if __name__ == "__main__":
-    import fire
+    text = ["A realistic painting of a owl flying through a colorful landscape.",
+            "A beautiful painting of an owl flying towards a forest.",
+            "A painting of an owl finding a pill in the forest.",
+            "A artistic cartoon of a owl swallow a pill in the forest.",
+            "A colorful trippy painting of a owl in a forest.",
+            "A trippy illustration of a owl. The Bottom is Colorful, while the top is black and white.",
+            "A painting of a spooky horrible forest. In the middle is a bleeding owl. The eyes are scary.",
+            "A horrifying cartoon of a dying owl, stabbed by a knife.",
+            "A sad funeral of birds grieve for the dead owl.",  # 97 ?
+            "A horrfying painting of a oak tree growing over the grave.",  # 97
+            "The owl is flying towards hell, burning to ashes, abstract horrifying art",
+            "A trippy sign of The End", ]
+    seed = [15, 13, 13, 7532, 2001, 1993, 21534, 2234, 97, 97, 97, 2001]
 
-    fire.Fire(walk)
+    video_path = walk(text, seed, num_steps=20, name="OwlFinal", make_video=True,
+                      latent_interpolation_steps=15, do_loop=True)
+
+    #import fire
+
+    #fire.Fire(walk)

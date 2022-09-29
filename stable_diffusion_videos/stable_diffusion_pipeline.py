@@ -222,18 +222,19 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
         image = (image / 2 + 0.5).clamp(0, 1)
         image = image.cpu().permute(0, 2, 3, 1).numpy()
-
-        safety_cheker_input = self.feature_extractor(
-            self.numpy_to_pil(image), return_tensors="pt"
-        ).to(self.device)
-        image, has_nsfw_concept = self.safety_checker(
-            images=image, clip_input=safety_cheker_input.pixel_values
-        )
-
+        if False:
+            safety_cheker_input = self.feature_extractor(
+                self.numpy_to_pil(image), return_tensors="pt"
+            ).to(self.device)
+            image, has_nsfw_concept = self.safety_checker(
+                images=image, clip_input=safety_cheker_input.pixel_values
+            )
+        else:
+            has_nsfw_concept = [False]
         if output_type == "pil":
             image = self.numpy_to_pil(image)
 
-        return {"sample": image, "nsfw_content_detected": has_nsfw_concept}
+        return {"sample": image, "nsfw_content_detected": has_nsfw_concept, "latent": latents}
 
     def embed_text(self, text):
         """Helper to embed some text"""
@@ -258,3 +259,4 @@ class NoCheck(ModelMixin):
 
     def forward(self, images=None, **kwargs):
         return images, [False]
+
