@@ -77,6 +77,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
         latents: Optional[torch.FloatTensor] = None,
         text_embeddings: Optional[torch.FloatTensor] = None,
         output_type: Optional[str] = "pil",
+        strength: Optional[float] = 1.0,
+        prev_img: Optional[torch.FloatTensor] = None,
         **kwargs,
     ):
         if "torch_device" in kwargs:
@@ -168,11 +170,15 @@ class StableDiffusionPipeline(DiffusionPipeline):
             extra_set_kwargs["offset"] = 1
 
         self.scheduler.set_timesteps(num_inference_steps, **extra_set_kwargs)
-
+        timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, strength, device)
         # if we use LMSDiscreteScheduler, let's make sure latents are mulitplied by sigmas
         if isinstance(self.scheduler, LMSDiscreteScheduler):
             latents = latents * self.scheduler.sigmas[0]
 
+        if strength < 1:
+            assert prev_img is not None, "Need to provide a img to allow for img2img generations"
+            latents = self.scheduler.add_noise(original_samples=prev_img, noise=latents, timesteps=timesteps[0])
+            assert latents.shape[0] == batch_size, "Somehow batchsize was not broadcasted"
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
         # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
@@ -184,7 +190,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
-        for i, t in enumerate(self.progress_bar(self.scheduler.timesteps)):
+        for i, t in enumerate(self.progress_bar(timesteps)):
             # expand the latents if we are doing classifier free guidance
             latent_model_input = (
                 torch.cat([latents] * 2) if do_classifier_free_guidance else latents
@@ -249,6 +255,15 @@ class StableDiffusionPipeline(DiffusionPipeline):
             with torch.no_grad():
                 embed = self.text_encoder(text_input.input_ids.to(self.device))[0]
         return embed
+
+    def get_timesteps(self, num_inference_steps, strength):
+        # get the original timestep using init_timestep
+        init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
+
+        t_start = max(num_inference_steps - init_timestep, 0)
+        timesteps = self.scheduler.timesteps[t_start :]
+
+        return timesteps, num_inference_steps - t_start
 
 
 class NoCheck(ModelMixin):

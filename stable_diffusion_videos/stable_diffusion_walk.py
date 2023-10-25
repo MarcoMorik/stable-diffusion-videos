@@ -10,8 +10,12 @@ from diffusers import ModelMixin
 
 from stable_diffusion_videos.stable_diffusion_pipeline import StableDiffusionPipeline
 
+
+model_id = "runwayml/stable-diffusion-v1-5"
+
+#model_id = "CompVis/stable-diffusion-v1-4"
 pipeline = StableDiffusionPipeline.from_pretrained(
-    "CompVis/stable-diffusion-v1-4",
+    model_id,
     use_auth_token="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",
     torch_dtype=torch.float16,
     revision="fp16",
@@ -93,6 +97,7 @@ def walk(
         batch_size=1,
         frame_filename_ext='.png',
         latent_interpolation_steps=20,
+        strength = 1.0,
 ):
     """Generate video frames/a video given a list of prompts and seeds.
 
@@ -264,7 +269,9 @@ def walk(
                     guidance_scale=guidance_scale,
                     eta=eta,
                     num_inference_steps=num_inference_steps,
-                    output_type='pil' if not upsample else 'numpy'
+                    output_type='pil' if not upsample else 'numpy',
+                    strength=strength if old_latent is not None else 1.0,
+                    prev_img=old_latent,
                 )
                 vae_latent = outputs["latent"]
                 if latent_interpolation_steps:
@@ -279,7 +286,7 @@ def walk(
 
                     if old_latent is not None:
                         #Interpolation from previous batch
-                        prev = torch.stack([torch.lerp(old_latent[-1:], vae_latent[:1], float(i) / latent_interpolation_steps) for i in
+                        prev = torch.stack([torch.lerp(old_latent, vae_latent[:1], float(i) / latent_interpolation_steps) for i in
                                             range(1, latent_interpolation_steps)], 1).reshape((-1, *dims[1:]))
 
                         intermediate_latents = torch.cat((prev,cur),dim=0)
@@ -309,7 +316,7 @@ def walk(
                                     frame_index += 1
                         del images
 
-                    old_latent = vae_latent
+                    old_latent = vae_latent[-1:]
 
                     del intermediate_latents
                 else:
@@ -418,8 +425,8 @@ if __name__ == "__main__":
     seed_wald = []
     for s in seeds:
         seed = [s] * len(text)
-        video_path = walk(text, seed, num_steps=1, output_dir="imgs", name=f"GroupStorySeed{s}", make_video=True,
-                      latent_interpolation_steps=0, do_loop=True, batch_size=2)
+        video_path = walk(text, seed, num_steps=5, output_dir="imgs", name=f"GroupStorySeed{s}", make_video=True,
+                      latent_interpolation_steps=10, do_loop=True, batch_size=2,strength=0.75)
 
     #import fire
 
