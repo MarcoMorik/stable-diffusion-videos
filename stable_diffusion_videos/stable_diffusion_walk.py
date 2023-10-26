@@ -163,6 +163,8 @@ def walk(
                     fps=fps,
                     height=height,
                     width=width,
+                    latent_interpolation_steps=latent_interpolation_steps,
+                    strength=strength,
                 ),
                 indent=2,
                 sort_keys=False,
@@ -220,6 +222,7 @@ def walk(
 
     frame_index = 0
     old_latent = None
+
     for prompt, seed in zip(prompts, seeds):
         # Text
         embeds_b = pipeline.embed_text(prompt)
@@ -391,12 +394,12 @@ if __name__ == "__main__":
             256,
             2001]
 
-    text = [
+    text_group = [
         "A group of Friends standing on an old, rusty, spooky attic, drinking a beer, Studio ghibli,  dark drawing, concept art",
         "A human-sized bottle of beer, holding a knife in its hand, lurking from behind a corner with an evil grin, greg rutkowski, sung choi, mitchell mohrhauser, maciej kuciara, johnson ting, maxim verehin, peter konig, bloodborne, 8 k photorealistic, cinematic lighting, hd, high details, dramatic, dark atmosphere, trending on artstation",
 
     ]
-    text = ["A group of friends standing on an old, rusty, spooky attic, drinking a beer, Studio ghibli, dark drawing, concept art",
+    text_group = ["A group of friends standing on an old, rusty, spooky attic, drinking a beer, Studio ghibli, dark drawing, concept art",
             "A human-sized bottle of beer with an evil grin, holding a knife in its hand, lurking from behind a corner, gritty industrial style",
             "A poison dart frog inside of an beer bottle, azur blue, death, digital art, glowing",
             "A blue human sized demon frog smokes a cigar, trending on artstation, trippy art",
@@ -423,10 +426,12 @@ if __name__ == "__main__":
 
     text_wald = []
     seed_wald = []
-    for s in seeds:
-        seed = [s] * len(text)
-        video_path = walk(text, seed, num_steps=5, output_dir="imgs", name=f"GroupStorySeed{s}", make_video=True,
-                      latent_interpolation_steps=10, do_loop=True, batch_size=2,strength=0.75)
+    for strength in [1.0,0.9,0.8,0.75,0.7,0.65]:
+        ##seed = [s] * len(text)
+
+        video_path = walk(text, seed, num_steps=60, output_dir="imgs", name=f"NewOldRobotStrength{strength}", make_video=True,height=512,
+            width=512, scheduler="ddim",
+                      latent_interpolation_steps=5, do_loop=True, batch_size=16,strength=strength)
 
     #import fire
 

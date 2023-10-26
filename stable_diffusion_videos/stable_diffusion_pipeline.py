@@ -170,14 +170,14 @@ class StableDiffusionPipeline(DiffusionPipeline):
             extra_set_kwargs["offset"] = 1
 
         self.scheduler.set_timesteps(num_inference_steps, **extra_set_kwargs)
-        timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, strength, device)
+        timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, strength)
         # if we use LMSDiscreteScheduler, let's make sure latents are mulitplied by sigmas
         if isinstance(self.scheduler, LMSDiscreteScheduler):
             latents = latents * self.scheduler.sigmas[0]
 
         if strength < 1:
             assert prev_img is not None, "Need to provide a img to allow for img2img generations"
-            latents = self.scheduler.add_noise(original_samples=prev_img, noise=latents, timesteps=timesteps[0])
+            latents = self.scheduler.add_noise(original_samples=prev_img, noise=latents, timesteps=torch.tensor([self.scheduler.num_inference_steps-num_inference_steps],dtype=torch.long)).float()
             assert latents.shape[0] == batch_size, "Somehow batchsize was not broadcasted"
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
         # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
