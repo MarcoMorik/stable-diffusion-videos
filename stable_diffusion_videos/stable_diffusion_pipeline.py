@@ -177,7 +177,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
         if strength < 1:
             assert prev_img is not None, "Need to provide a img to allow for img2img generations"
-            latents = self.scheduler.add_noise(original_samples=prev_img, noise=latents, timesteps=torch.tensor([self.scheduler.num_inference_steps-num_inference_steps],dtype=torch.long)).float()
+            latents = self.scheduler.add_noise(original_samples=prev_img * 0.18215  , noise=latents, timesteps=torch.tensor([int(timesteps[0])],dtype=torch.long)).float()
             assert latents.shape[0] == batch_size, "Somehow batchsize was not broadcasted"
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
         # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
